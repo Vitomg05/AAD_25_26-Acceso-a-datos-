@@ -1,6 +1,7 @@
 package com.vmacgar473.aad;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
@@ -22,265 +23,245 @@ public class AadApplication implements CommandLineRunner {
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    // ======== Definición del registro fijo ========
+    // Estructura: [int id (4)] [nombre 20 bytes ASCII] [double nota (8)] = 32 bytes
+    private static final int BYTES_NOMBRE = 20;
+    private static final int TAMANO_REGISTRO = 4 + BYTES_NOMBRE + 8;
+
+    //Fichero de datos
+    private static final String FICHERO_DATOS = "alumnos.dat";
+
     public static void main(String[] args) {
         SpringApplication.run(AadApplication.class, args);
     }
 
     @Override
     public void run(String... args) {
-        System.out.println("=== Mini Explorador de Ficheros ===");
-        Path dir = solicitarDirectorio();
-        if (dir == null) {
-            // Ya se mostró el error correspondiente.
-            return;
-        }
+        crearFicheroSiNoExiste();
 
         while (true) {
-            System.out.println();
-            listarContenidoDirectorio(dir);
-            System.out.println();
             mostrarMenu();
-            int opcion = leerOpcion();
-
-            switch (opcion) {
-                case 1 -> dir = cambiarDirectorio(dir);
-                case 2 -> crearFichero(dir);
-                case 3 -> moverFichero(dir);
-                case 4 -> borrarFichero(dir);
-                case 5 -> {
-                    System.out.println("Saliendo... ¡Hasta luego!");
-                    return;
+            int opcion = leerEntero("Elige una opción: ");
+            try {
+                switch (opcion) {
+                    case 1:
+                        insertarAlumno();
+                        break;
+                    case 2:
+                        consultarPorPosicion();
+                        break;
+                    case 3:
+                        modificarNota();
+                        break;
+                    case 4:
+                        mostrarInformacion();
+                        break;
+                    case 0:
+                        System.out.println("Saliendo... ¡Hasta luego!");
+                        return;
+                    default:
+                        System.out.println("Opción no válida.");
+                        break;
                 }
-                default -> System.out.println("Opción no válida. Inténtalo de nuevo.");
+            } catch (IOException e) {
+                System.err.println("Error de entrada/salida: " + e.getMessage());
             }
+            System.out.println();
         }
     }
 
-    // ====== Operaciones ======
+    // ======== Operaciones principales ========
 
-    private Path solicitarDirectorio() {
-        System.out.print("Introduce la ruta de un directorio: ");
-        String entrada = scanner.nextLine().trim();
+    // 1) Insertar nuevo alumno (acceso secuencial)
+    private void insertarAlumno() throws IOException {
+        int id = leerEntero("Introduce el ID del alumno: ");
+        String nombre = leerTextoNoVacio("Introduce el nombre (máx. 20 caracteres): ");
+        double nota = leerDecimal("Introduce la nota: ");
 
-        Path dir = entrada.isEmpty() ? Paths.get(".").toAbsolutePath().normalize()
-                : Paths.get(entrada).toAbsolutePath().normalize();
-
-        if (!Files.exists(dir)) {
-            System.err.println("Error: el directorio no existe -> " + dir);
-            return null;
+        try (RandomAccessFile fichero = new RandomAccessFile(FICHERO_DATOS, "rw")) {
+            long fin = fichero.length();
+            fichero.seek(fin);
+            escribirRegistro(fichero, id, nombre, nota);
+            System.out.println("Alumno insertado en posición " + (fin / TAMANO_REGISTRO) + " (base 0).");
         }
-        if (!Files.isDirectory(dir)) {
-            System.err.println("Error: la ruta no es un directorio -> " + dir);
-            return null;
-        }
-        if (!Files.isReadable(dir)) {
-            System.err.println("Error: permisos insuficientes de lectura en -> " + dir);
-            return null;
-        }
-
-        System.out.println("Trabajando en: " + dir);
-        return dir;
     }
 
-    private void listarContenidoDirectorio(Path dir) {
-        System.out.println("Contenido de: " + dir);
-        System.out.println("------------------------------------------------------------");
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
-            int count = 0;
-            for (Path p : stream) {
-                count++;
-                try {
-                    if (Files.isDirectory(p)) {
-                        System.out.printf("[DIR ] %-40s%n", p.getFileName());
-                    } else if (Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS)) {
-                        BasicFileAttributes attrs = Files.readAttributes(p, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-                        long size = attrs.size();
-                        String fecha = formatoFecha(attrs.lastModifiedTime().toInstant());
-                        System.out.printf("[FILE] %-30s  %10d bytes  %s%n",
-                                p.getFileName(), size, fecha);
-                    } else if (Files.isSymbolicLink(p)) {
-                        System.out.printf("[LINK] %-40s%n", p.getFileName());
-                    } else {
-                        System.out.printf("[OTRO] %-40s%n", p.getFileName());
-                    }
-                } catch (AccessDeniedException ade) {
-                    System.out.printf("[????] %-30s  (Acceso denegado)%n", p.getFileName());
-                } catch (IOException ioe) {
-                    System.out.printf("[ERR ] %-30s  (No se pudo leer: %s)%n", p.getFileName(), ioe.getMessage());
-                }
+    // 2) Consultar alumno por posición (acceso aleatorio)
+    private void consultarPorPosicion() throws IOException {
+        long total = contarRegistros();
+        if (total == 0) {
+            System.out.println("No hay registros.");
+            return;
+        }
+        long posicion = leerLongEnRango("Posición a consultar (0 - " + (total - 1) + "): ", 0, total - 1);
+
+        try (RandomAccessFile fichero = new RandomAccessFile(FICHERO_DATOS, "r")) {
+            fichero.seek(posicion * TAMANO_REGISTRO);
+            Alumno alumno = leerRegistro(fichero);
+            System.out.printf("Posición %d -> ID=%d | Nombre=\"%s\" | Nota=%.2f%n",
+                    posicion, alumno.id(), alumno.nombre(), alumno.nota());
+        }
+    }
+
+    // 3) Modificar solo la nota (sin reescribir todo el fichero)
+    private void modificarNota() throws IOException {
+        long total = contarRegistros();
+        if (total == 0) {
+            System.out.println("No hay registros.");
+            return;
+        }
+        long posicion = leerLongEnRango("Posición a modificar (0 - " + (total - 1) + "): ", 0, total - 1);
+        double nuevaNota = leerDecimal("Nueva nota: ");
+
+        try (RandomAccessFile fichero = new RandomAccessFile(FICHERO_DATOS, "rw")) {
+            long base = posicion * TAMANO_REGISTRO;
+            long desplazamientoNota = base + 4 + BYTES_NOMBRE; // offset de la nota
+            fichero.seek(desplazamientoNota);
+            fichero.writeDouble(nuevaNota);
+        }
+        System.out.println("Nota modificada correctamente.");
+    }
+
+    // 4) Mostrar número de registros y tamaño total
+    private void mostrarInformacion() throws IOException {
+        long total = contarRegistros();
+        long bytes = Files.size(Path.of(FICHERO_DATOS));
+        System.out.printf("Registros: %d | Tamaño del fichero: %d bytes | Tamaño de registro: %d bytes%n",
+                total, bytes, TAMANO_REGISTRO);
+    }
+
+    // ======== Métodos auxiliares de lectura/escritura ========
+
+    private void escribirRegistro(RandomAccessFile fichero, int id, String nombre, double nota) throws IOException {
+        fichero.writeInt(id);
+        byte[] nombreBytes = convertirAFijo(nombre, BYTES_NOMBRE);
+        fichero.write(nombreBytes);
+        fichero.writeDouble(nota);
+    }
+
+    private Alumno leerRegistro(RandomAccessFile fichero) throws IOException {
+        int id = fichero.readInt();
+        byte[] nombreBytes = new byte[BYTES_NOMBRE];
+        int leidos = fichero.read(nombreBytes);
+        if (leidos != BYTES_NOMBRE) {
+            throw new IOException("Registro corrupto (nombre incompleto).");
+        }
+        String nombre = convertirDesdeFijo(nombreBytes);
+        double nota = fichero.readDouble();
+        return new Alumno(id, nombre, nota);
+    }
+
+    private long contarRegistros() throws IOException {
+        long bytes = Files.size(Path.of(FICHERO_DATOS));
+        if (bytes % TAMANO_REGISTRO != 0) {
+            throw new IOException("El fichero parece estar dañado (tamaño irregular).");
+        }
+        return bytes / TAMANO_REGISTRO;
+    }
+
+    private static byte[] convertirAFijo(String texto, int tamano) {
+        String recortado = texto == null ? "" : texto.trim();
+        byte[] crudo = recortado.getBytes(StandardCharsets.US_ASCII);
+        byte[] fijo = new byte[tamano];
+        int longitud = Math.min(crudo.length, tamano);
+        System.arraycopy(crudo, 0, fijo, 0, longitud);
+        for (int i = longitud; i < tamano; i++) fijo[i] = ' ';
+        return fijo;
+    }
+
+    private static String convertirDesdeFijo(byte[] bytes) {
+        String texto = new String(bytes, StandardCharsets.US_ASCII);
+        return quitarEspaciosDerecha(texto);
+    }
+
+    private static String quitarEspaciosDerecha(String texto) {
+        int fin = texto.length();
+        while (fin > 0 && texto.charAt(fin - 1) == ' ') fin--;
+        return texto.substring(0, fin);
+    }
+
+    private static void crearFicheroSiNoExiste() {
+        try {
+            Path ruta = Path.of(FICHERO_DATOS);
+            if (!Files.exists(ruta)) {
+                Files.createFile(ruta);
             }
-            if (count == 0) {
-                System.out.println("(Directorio vacío)");
-            }
-        } catch (NoSuchFileException e) {
-            System.err.println("El directorio ya no existe: " + dir);
-        } catch (AccessDeniedException e) {
-            System.err.println("Permisos insuficientes para listar: " + dir);
         } catch (IOException e) {
-            System.err.println("Error al listar el directorio: " + e.getMessage());
+            throw new RuntimeException("No se pudo crear el fichero: " + FICHERO_DATOS, e);
         }
-        System.out.println("------------------------------------------------------------");
     }
+
+    // ======== Métodos de lectura por consola ========
 
     private void mostrarMenu() {
         System.out.println("""
-                Menú:
-                  1) Cambiar de directorio
-                  2) Crear fichero vacío
-                  3) Mover fichero
-                  4) Borrar fichero
-                  5) Salir
+                ===============================
+                GESTIÓN DE ALUMNOS (BINARIO)
+                ===============================
+                1) Insertar alumno (secuencial)
+                2) Consultar alumno por posición (aleatorio)
+                3) Modificar nota de un alumno
+                4) Mostrar información del fichero
+                0) Salir
                 """);
-        System.out.print("Elige una opción (1-5): ");
     }
 
-    private int leerOpcion() {
-        try {
-            String line = scanner.nextLine().trim();
-            return Integer.parseInt(line);
-        } catch (NumberFormatException ex) {
-            return -1;
-        }
-    }
-
-    private Path cambiarDirectorio(Path actual) {
-        System.out.println("Directorio actual: " + actual);
-        System.out.print("Introduce nueva ruta (relativa o absoluta): ");
-        String entrada = scanner.nextLine().trim();
-        Path nuevo = entrada.isEmpty() ? actual : actual.resolve(entrada).toAbsolutePath().normalize();
-
-        if (!Files.exists(nuevo)) {
-            System.err.println("Error: el directorio no existe -> " + nuevo);
-            return actual;
-        }
-        if (!Files.isDirectory(nuevo)) {
-            System.err.println("Error: la ruta no es un directorio -> " + nuevo);
-            return actual;
-        }
-        if (!Files.isReadable(nuevo)) {
-            System.err.println("Error: permisos insuficientes de lectura en -> " + nuevo);
-            return actual;
-        }
-        System.out.println("Directorio cambiado a: " + nuevo);
-        return nuevo;
-    }
-
-    private void crearFichero(Path dirBase) {
-        System.out.print("Nombre del nuevo fichero (puede ser ruta relativa o absoluta): ");
-        String entrada = scanner.nextLine().trim();
-        if (entrada.isEmpty()) {
-            System.err.println("Nombre vacío. Operación cancelada.");
-            return;
-        }
-        Path destino = resolverRuta(dirBase, entrada);
-
-        try {
-            if (Files.exists(destino)) {
-                System.err.println("Error: ya existe un fichero o directorio con ese nombre.");
-                return;
-            }
-            Files.createDirectories(destino.getParent()); // por si se indicó una subcarpeta
-            Files.createFile(destino);
-            System.out.println("Fichero creado: " + destino);
-        } catch (AccessDeniedException e) {
-            System.err.println("Permisos insuficientes para crear en: " + destino.getParent());
-        } catch (IOException e) {
-            System.err.println("No se pudo crear el fichero: " + e.getMessage());
-        }
-    }
-
-    private void moverFichero(Path dirBase) {
-        System.out.print("Ruta del fichero a mover (relativa o absoluta): ");
-        String origenStr = scanner.nextLine().trim();
-        if (origenStr.isEmpty()) {
-            System.err.println("Ruta vacía. Operación cancelada.");
-            return;
-        }
-        Path origen = resolverRuta(dirBase, origenStr);
-
-        if (!Files.exists(origen)) {
-            System.err.println("Error: el fichero origen no existe.");
-            return;
-        }
-        if (!Files.isRegularFile(origen)) {
-            System.err.println("Error: la ruta origen no es un fichero regular.");
-            return;
-        }
-
-        System.out.print("Nueva ruta de destino (incluye nombre de fichero): ");
-        String destinoStr = scanner.nextLine().trim();
-        if (destinoStr.isEmpty()) {
-            System.err.println("Ruta de destino vacía. Operación cancelada.");
-            return;
-        }
-        Path destino = resolverRuta(dirBase, destinoStr);
-
-        try {
-            Files.createDirectories(destino.getParent());
-            // No sobrescribimos si ya existe para evitar perder datos
-            if (Files.exists(destino)) {
-                System.err.println("Error: ya existe un fichero en el destino. Elige otro nombre/ruta.");
-                return;
-            }
-            Files.move(origen, destino, StandardCopyOption.ATOMIC_MOVE);
-            System.out.println("Fichero movido:\n  De: " + origen + "\n  A : " + destino);
-        } catch (AtomicMoveNotSupportedException e) {
-            // Si no se soporta movimiento atómico, hacemos un move normal
+    private int leerEntero(String mensaje) {
+        while (true) {
             try {
-                Files.move(origen, destino);
-                System.out.println("Fichero movido (no atómico):\n  De: " + origen + "\n  A : " + destino);
-            } catch (AccessDeniedException ade) {
-                System.err.println("Permisos insuficientes para mover. Origen/Destino protegidos.");
-            } catch (IOException ioe) {
-                System.err.println("No se pudo mover el fichero: " + ioe.getMessage());
+                System.out.print(mensaje);
+                String linea = scanner.nextLine().trim();
+                return Integer.parseInt(linea);
+            } catch (NumberFormatException e) {
+                System.out.println("Introduce un número entero válido.");
             }
-        } catch (AccessDeniedException e) {
-            System.err.println("Permisos insuficientes para mover. Origen/Destino protegidos.");
-        } catch (IOException e) {
-            System.err.println("No se pudo mover el fichero: " + e.getMessage());
         }
     }
 
-    private void borrarFichero(Path dirBase) {
-        System.out.print("Ruta del fichero a borrar (relativa o absoluta): ");
-        String entrada = scanner.nextLine().trim();
-        if (entrada.isEmpty()) {
-            System.err.println("Ruta vacía. Operación cancelada.");
-            return;
-        }
-        Path objetivo = resolverRuta(dirBase, entrada);
-
-        try {
-            if (!Files.exists(objetivo)) {
-                System.err.println("Error: el fichero no existe.");
-                return;
+    private double leerDecimal(String mensaje) {
+        while (true) {
+            try {
+                System.out.print(mensaje);
+                String linea = scanner.nextLine().trim();
+                return Double.parseDouble(linea.replace(',', '.'));
+            } catch (NumberFormatException e) {
+                System.out.println("Introduce un número decimal válido.");
             }
-            if (!Files.isRegularFile(objetivo)) {
-                System.err.println("Error: solo se permite borrar ficheros regulares (no directorios).");
-                return;
-            }
-            Files.delete(objetivo);
-            System.out.println("Fichero borrado: " + objetivo);
-        } catch (DirectoryNotEmptyException e) {
-            System.err.println("No es un fichero, es un directorio con contenido.");
-        } catch (AccessDeniedException e) {
-            System.err.println("Permisos insuficientes para borrar: " + objetivo);
-        } catch (IOException e) {
-            System.err.println("No se pudo borrar el fichero: " + e.getMessage());
         }
     }
 
-    // ====== Utilidades ======
-
-    private Path resolverRuta(Path base, String entrada) {
-        Path p = Paths.get(entrada);
-        return p.isAbsolute() ? p.normalize() : base.resolve(p).toAbsolutePath().normalize();
+    private long leerLongEnRango(String mensaje, long minimo, long maximo) {
+        while (true) {
+            try {
+                System.out.print(mensaje);
+                String linea = scanner.nextLine().trim();
+                long valor = Long.parseLong(linea);
+                if (valor < minimo || valor > maximo) {
+                    System.out.printf("El valor debe estar entre %d y %d.%n", minimo, maximo);
+                } else {
+                    return valor;
+                }
+            } catch (NumberFormatException e) {
+                System.out.println("Introduce un número válido.");
+            }
+        }
     }
 
-    private String formatoFecha(Instant instant) {
-        LocalDateTime ldt = LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
-        return DATE_FMT.format(ldt);
+    private String leerTextoNoVacio(String mensaje) {
+        while (true) {
+            System.out.print(mensaje);
+            String texto = scanner.nextLine();
+            if (texto == null || texto.trim().isEmpty()) {
+                System.out.println("El texto no puede estar vacío.");
+            } else {
+                return texto;
+            }
+        }
     }
+
+    // ======== Clase interna Alumno ========
+    private record Alumno(int id, String nombre, double nota) {}
 }
+
 
 
