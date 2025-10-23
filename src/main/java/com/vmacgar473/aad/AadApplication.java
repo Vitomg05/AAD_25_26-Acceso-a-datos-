@@ -1,23 +1,18 @@
 package com.vmacgar473.aad;
 
-import java.io.IOException;
-import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.InputMismatchException;
-import java.util.Scanner;
-
+import com.vmacgar473.aad.Model.Students;
+import com.vmacgar473.aad.service.StudentService;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
+@RequiredArgsConstructor
+
 public class AadApplication implements CommandLineRunner {
+
+    private final StudentService studentService;
 
     public static void main(String[] args) {
         SpringApplication.run(AadApplication.class, args);
@@ -25,6 +20,8 @@ public class AadApplication implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
+
+        Students students = new Students("");
 
     }
 }
