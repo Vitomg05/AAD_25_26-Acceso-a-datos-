@@ -11,11 +11,6 @@ public class Students extends Person {
 
     private List<Module> modules;
 
-    public Students(String dni, String name) {
-        super(dni, name, prename);
-        this.course = course;
-    }
-
     private String course;
 
     public Students(String course) {
