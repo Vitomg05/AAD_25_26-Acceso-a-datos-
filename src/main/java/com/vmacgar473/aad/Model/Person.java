@@ -18,17 +18,7 @@ public class Person {
 
 
 //    public Person(String dni, String name, String prename) {
-//        this.dni = dni;
-//        this.name = name;
 //        this.prename = prename;
-//    }
-//
-//    public String getName() {
-//        return name;
-//    }
-//
-//    public void setName(String name) {
-//        this.name = name;
 //    }
 //
 //    public String getPrename() {
@@ -38,13 +28,4 @@ public class Person {
 //    public void setPrename(String prename) {
 //        this.prename = prename;
 //    }
-//
-//    public String getDni() {
-//        return dni;
-//    }
-//
-//    public void setDni(String dni) {
-//        this.dni = dni;
-//    }
-
 }
